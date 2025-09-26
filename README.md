@@ -1,2 +1,2 @@
 # chainchaser
-A all encompasing disc golf app that encourages community. 
+A one-stop shop disc golf app that encourages community. 
