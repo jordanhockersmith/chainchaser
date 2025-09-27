@@ -17,21 +17,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, passwo
 c.execute('''CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY, username TEXT, course TEXT, rating INTEGER, comment TEXT, flagged TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS rounds (id INTEGER PRIMARY KEY, username TEXT, course TEXT, date TEXT, throws TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS courses (id INTEGER PRIMARY KEY, name TEXT UNIQUE, lat REAL, lon REAL, layout TEXT)''')
-
-# Initialize Thorpe Park if not in database
-c.execute("SELECT name FROM courses WHERE name='Thorpe Park'")
-if not c.fetchone():
-    thorpe_layout = [
-        {'hole': i, 'tee': {'lat': 35.2058 + (i*0.0005), 'lon': -111.6574 + (i*0.0003)},
-         'baskets': [
-             {'id': 1, 'lat': 35.2058 + (i*0.0008), 'lon': -111.6574 + (i*0.0006), 'active': True},
-             {'id': 2, 'lat': 35.2058 + (i*0.0012), 'lon': -111.6574 + (i*0.0009), 'active': False}
-         ]} for i in range(1, 19)
-    ]
-    c.execute("INSERT INTO courses (name, lat, lon, layout) VALUES (?, ?, ?, ?)",
-              ('Thorpe Park', 35.205856, -111.657357, str(thorpe_layout)))
-    conn.commit()
-
 conn.commit()
 
 # Google Places API key
@@ -148,13 +133,16 @@ else:
             st.session_state.current_location = None
 
         # Fetch nearby courses
-        courses = get_nearby_places(lat, lon, radius=st.session_state.map_radius)
-        course_names = [name for name, _, _ in courses] + ["Custom Course"]
+        c.execute("SELECT name, lat, lon FROM courses")
+        saved_courses = [(row[0], row[1], row[2]) for row in c.fetchall()]
+        nearby_courses = get_nearby_places(lat, lon, radius=st.session_state.map_radius)
+        course_names = list(set([name for name, _, _ in saved_courses + nearby_courses])) + ["Custom Course"]
+        st.write(f"Debug: Saved courses: {saved_courses}, Nearby courses: {nearby_courses}, All courses: {course_names}")
         selected_course = st.selectbox("Select a Course", course_names)
         
         # Get course coords
         if selected_course != "Custom Course":
-            course_data = next((name, c_lat, c_lon) for name, c_lat, c_lon in courses if name == selected_course)
+            course_data = next((name, c_lat, c_lon) for name, c_lat, c_lon in (saved_courses + nearby_courses) if name == selected_course)
             course_name, course_lat, course_lon = course_data
         else:
             course_name = st.text_input("Enter Custom Course Name")
@@ -203,8 +191,8 @@ else:
                                             b['active'] = st.checkbox("Set as Active", value=b.get('active', False))
                                             updated = True
                                             break
-                                    if not updated:
-                                        hole['baskets'].append({'id': basket_id, 'lat': clicked_lat, 'lon': clicked_lon, 'active': st.checkbox("Set as Active", value=False)})
+                                if not updated:
+                                    hole['baskets'].append({'id': basket_id, 'lat': clicked_lat, 'lon': clicked_lon, 'active': st.checkbox("Set as Active", value=False)})
                                 updated = True
                                 break
                         if not updated:
@@ -265,7 +253,7 @@ else:
         if not courses:
             st.info("No courses found nearby. Try broadening the search radius or adding a custom course. Popular spots in Flagstaff include: Thorpe Park (18 holes, city course with pines), McPherson Park (24 holes, wooded with elevation and views of San Francisco Peaks), Fort Tuthill County Park (18 holes, free public course in historic park), Northern Arizona University Campus (9 holes, campus-friendly), Little America Hotel (9 holes, resort-style), and Arizona Snowbowl (18 holes, mountain terrain with views—seasonal, closed until summer 2025). Check UDisc for maps and latest conditions.")
             if st.button("Broaden Search"):
-                st.session_state.map_radius += 10000
+                st.session_state.map_radius += 20000
                 st.rerun()
 
     elif page == "Submit Review":
@@ -300,16 +288,16 @@ else:
 
     elif page == "Track Round":
         st.header("Track a Round (Auto GPS Throws)")
-        # Course selector for layout integration
+        # Course selector: same as Map Courses
         c.execute("SELECT name, lat, lon FROM courses")
         saved_courses = [(row[0], row[1], row[2]) for row in c.fetchall()]
-        st.write(f"Debug: Saved courses from DB: {saved_courses}")  # Debug
+        st.write(f"Debug: Saved courses from DB: {saved_courses}")
         try:
             from streamlit_geolocation import streamlit_geolocation
             location = streamlit_geolocation()
             if location and location['latitude']:
                 nearby_courses = get_nearby_places(location['latitude'], location['longitude'])
-                st.write(f"Debug: Nearby courses: {nearby_courses}")  # Debug
+                st.write(f"Debug: Nearby courses: {nearby_courses}")
                 nearby_names = [name for name, _, _ in nearby_courses]
                 all_courses = list(set([name for name, _, _ in saved_courses] + nearby_names)) + ["Custom Course"]
                 st.session_state.current_location = (location['latitude'], location['longitude'])
@@ -323,19 +311,26 @@ else:
             st.session_state.current_location = None
             st.error(f"Geolocation error: {str(e)}.")
         
-        st.write(f"Debug: All courses for selection: {all_courses}")  # Debug
+        st.write(f"Debug: All courses for selection: {all_courses}")
         selected_course = st.selectbox("Select Course (for layout)", all_courses)
         
+        # Get course coords
+        if selected_course != "Custom Course":
+            course_data = next((name, c_lat, c_lon) for name, c_lat, c_lon in (saved_courses + nearby_courses) if name == selected_course)
+            course_name, course_lat, course_lon = course_data
+        else:
+            course_name = st.text_input("Enter Custom Course Name")
+            course_lat = st.number_input("Course Latitude", value=35.1983, step=0.0001, format="%.4f")
+            course_lon = st.number_input("Course Longitude", value=-111.6513, step=0.0001, format="%.4f")
+        
         # Load layout for selected course
-        c.execute("SELECT layout, lat, lon FROM courses WHERE name=?", (selected_course,))
+        c.execute("SELECT layout FROM courses WHERE name=?", (course_name,))
         layout_result = c.fetchone()
         if layout_result:
             layout = eval(layout_result[0])
-            course_lat, course_lon = layout_result[1], layout_result[2]
-            st.success(f"Layout loaded for {selected_course}")
+            st.success(f"Layout loaded for {course_name}")
         else:
             layout = []
-            course_lat, course_lon = 35.1983, -111.6513  # Default Flagstaff
             st.warning("No layout found—basic tracking only.")
         
         # Display layout map
@@ -417,7 +412,7 @@ else:
         if st.button("Finish Round & Log"):
             throws_str = str(st.session_state.current_round)
             c.execute("INSERT INTO rounds (username, course, date, throws) VALUES (?, ?, ?, ?)",
-                      (st.session_state.username, selected_course, str(date), throws_str))
+                      (st.session_state.username, course_name, str(date), throws_str))
             conn.commit()
             st.success("Round logged! Check Analytics or Map Courses to see your throws.")
             st.session_state.current_round = []
