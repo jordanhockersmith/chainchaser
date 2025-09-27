@@ -230,7 +230,7 @@ else:
                        attr='Google Satellite')
         folium.Marker([course_lat, course_lon], popup=course_name, icon=folium.Icon(color="green", icon="flag")).add_to(m)
         if st.session_state.current_location:
-            folium.CircleMarker([st.session_state.current_location[0], st.session_state.current_location[1], 
+            folium.CircleMarker([st.session_state.current_location[0], st.session_state.current_location[1]], 
                                radius=5, color="red", fill=True, fill_color="red", popup="You Are Here").add_to(m)
         for hole in layout:
             if hole.get('tee'):
