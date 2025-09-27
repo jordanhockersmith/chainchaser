@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -17,6 +18,21 @@ c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, passwo
 c.execute('''CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY, username TEXT, course TEXT, rating INTEGER, comment TEXT, flagged TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS rounds (id INTEGER PRIMARY KEY, username TEXT, course TEXT, date TEXT, throws TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS courses (id INTEGER PRIMARY KEY, name TEXT UNIQUE, lat REAL, lon REAL, layout TEXT)''')
+
+# Initialize Thorpe Park if not in database
+c.execute("SELECT name FROM courses WHERE name='Thorpe Park'")
+if not c.fetchone():
+    thorpe_layout = [
+        {'hole': i, 'tee': {'lat': 35.2058 + (i*0.0005), 'lon': -111.6574 + (i*0.0003)},
+         'baskets': [
+             {'id': 1, 'lat': 35.2058 + (i*0.0008), 'lon': -111.6574 + (i*0.0006), 'active': True},
+             {'id': 2, 'lat': 35.2058 + (i*0.0012), 'lon': -111.6574 + (i*0.0009), 'active': False}
+         ]} for i in range(1, 19)
+    ]
+    c.execute("INSERT INTO courses (name, lat, lon, layout) VALUES (?, ?, ?, ?)",
+              ('Thorpe Park', 35.205856, -111.657357, str(thorpe_layout)))
+    conn.commit()
+
 conn.commit()
 
 # Google Places API key
@@ -214,7 +230,7 @@ else:
                        attr='Google Satellite')
         folium.Marker([course_lat, course_lon], popup=course_name, icon=folium.Icon(color="green", icon="flag")).add_to(m)
         if st.session_state.current_location:
-            folium.CircleMarker([st.session_state.current_location[0], st.session_state.current_location[1]], 
+            folium.CircleMarker([st.session_state.current_location[0], st.session_state.current_location[1], 
                                radius=5, color="red", fill=True, fill_color="red", popup="You Are Here").add_to(m)
         for hole in layout:
             if hole.get('tee'):
@@ -286,25 +302,29 @@ else:
     elif page == "Track Round":
         st.header("Track a Round (Auto GPS Throws)")
         # Course selector for layout integration
-        c.execute("SELECT name FROM courses")
-        saved_courses = [row[0] for row in c.fetchall()]
+        c.execute("SELECT name, lat, lon FROM courses")
+        saved_courses = [(row[0], row[1], row[2]) for row in c.fetchall()]
+        st.write(f"Debug: Saved courses from DB: {saved_courses}")  # Debug
         try:
+            from streamlit_geolocation import streamlit_geolocation
             location = streamlit_geolocation()
             if location and location['latitude']:
                 nearby_courses = get_nearby_places(location['latitude'], location['longitude'])
+                st.write(f"Debug: Nearby courses: {nearby_courses}")  # Debug
                 nearby_names = [name for name, _, _ in nearby_courses]
-                all_courses = list(set(saved_courses + nearby_names)) + ["Custom Course"]
+                all_courses = list(set([name for name, _, _ in saved_courses] + nearby_names)) + ["Custom Course"]
                 st.session_state.current_location = (location['latitude'], location['longitude'])
                 st.write(f"Your location: {st.session_state.current_location[0]:.4f}, {st.session_state.current_location[1]:.4f}")
             else:
-                all_courses = saved_courses + ["Custom Course"]
+                all_courses = [name for name, _, _ in saved_courses] + ["Custom Course"]
                 st.session_state.current_location = None
-                st.info("Enable GPS for live location.")
+                st.info("Enable GPS for live location and nearby courses.")
         except Exception as e:
-            all_courses = saved_courses + ["Custom Course"]
+            all_courses = [name for name, _, _ in saved_courses] + ["Custom Course"]
             st.session_state.current_location = None
             st.error(f"Geolocation error: {str(e)}.")
-
+        
+        st.write(f"Debug: All courses for selection: {all_courses}")  # Debug
         selected_course = st.selectbox("Select Course (for layout)", all_courses)
         
         # Load layout for selected course
@@ -449,3 +469,4 @@ else:
 
 # Close DB
 conn.close()
+```
